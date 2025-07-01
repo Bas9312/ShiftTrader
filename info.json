@@ -1,5 +1,13 @@
 {
-    "0": [],
+    "0": [{
+        "id": 1,
+        "description": "База по магии (тест)",
+        "details": "Здесь могли бы быть правила по магический дисциплине, но пока это просто тест и ссылка :) https://vk.com/@ri_shift-magicheskie-modeli-i-ih-kratkoe-opisanie",
+        "cost": 10,
+        "cost_name": "басиков",
+        "seller_id": "9312",
+        "seller_name": "Бас"
+    }],
     "1": [
         {
             "id": 1,
