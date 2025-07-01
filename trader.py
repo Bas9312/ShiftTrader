@@ -3,8 +3,8 @@ import os
 import logging
 import asyncio
 import argparse
-import time
-
+import re
+from datetime import datetime
 from pathlib import Path
 from telegram import Update
 from telegram.ext import (
@@ -12,7 +12,8 @@ from telegram.ext import (
     ContextTypes,
     CommandHandler,
     MessageHandler,
-    filters
+    filters,
+    ConversationHandler
 )
 
 # Импортируйте ваш OpenAI SDK, как у вас настроено
@@ -22,18 +23,43 @@ from openai import OpenAI
 # Файлы
 USERS_FILE = "users.json"
 INFO_FILE = "info.json"
+LOGS_DIR = "logs"
 
 # ID вашего ассистента в OpenAI
 ASSISTANT_ID = "asst_VxE0V10Gi7Q3EXRIFvUSbqTp"
 
-# Настраиваем логирование
+# Состояния для ConversationHandler
+WAITING_FOR_NAME = 1
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    encoding='utf-8'
-)
+# Создаем директорию для логов, если её нет
+if not os.path.exists(LOGS_DIR):
+    os.makedirs(LOGS_DIR)
 
+# Настраиваем общее логирование
+general_logger = logging.getLogger('general')
+general_logger.setLevel(logging.INFO)
+general_handler = logging.FileHandler(os.path.join(LOGS_DIR, 'general.log'), encoding='utf-8')
+general_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+general_logger.addHandler(general_handler)
+
+# Логирование операций
+OPERATIONS_LOG = "operations.log"
+def log_operation(text):
+    with open(OPERATIONS_LOG, "a", encoding="utf-8") as f:
+        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {text}\n")
+
+# Функция для получения логгера пользователя
+def get_user_logger(user_id: str, user_name: str) -> logging.Logger:
+    logger = logging.getLogger(f'user_{user_id}')
+    if not logger.handlers:
+        handler = logging.FileHandler(
+            os.path.join(LOGS_DIR, f'user_{user_id}_{user_name}.log'),
+            encoding='utf-8'
+        )
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    return logger
 
 # ------------------------------------------------------------------------------
 # Загрузка и сохранение данных
@@ -43,7 +69,7 @@ def load_data(file_path):
         # Создаём файл и инициализируем пустой структурой
         if file_path == INFO_FILE:
             with open(file_path, "w", encoding="utf-8") as f:
-                json.dump([], f, ensure_ascii=False, indent=4)
+                json.dump({"0": [], "1": [], "2": [], "3": [], "4": [], "5": []}, f, ensure_ascii=False, indent=4)
         else:
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump({}, f, ensure_ascii=False, indent=4)
@@ -82,48 +108,122 @@ def update_balance(user_id: str, amount: int):
     save_data(USERS_FILE, users)
 
 
-def add_info(user_id, user_name, description, details, cost):
-    info.append({
-        "id": len(info) + 1,
+# Новая структура info: категории -> массивы инфы
+CATEGORY_NAMES = {
+    "0": "О магических дисциплинах (от особого поставщика)",
+    "1": "О магических дисциплинах",
+    "2": "О конкретных волшебниках или их группах",
+    "3": "О магических существах",
+    "4": "О магических местах и артефактах",
+    "5": "Прочие знания"
+}
+
+def get_categories_with_counts():
+    """Вернуть список категорий и количество информации в каждой."""
+    return [
+        {"id": cat_id, "name": CATEGORY_NAMES.get(cat_id, cat_id), "count": len(info[cat_id])}
+        for cat_id in info.keys()
+    ]
+
+def add_info(category_id, user_id, user_name, description, details, cost, cost_name="штукарики"):
+    if category_id == 0:
+        raise Exception("В категорию 0 нельзя продавать информацию! Особый поставщик только продает.")
+    # id внутри категории
+    new_id = 1
+    if info[str(category_id)]:
+        new_id = max(item["id"] for item in info[str(category_id)]) + 1
+    info[str(category_id)].append({
+        "id": new_id,
         "description": description,
         "details": details,
         "cost": cost,
+        "cost_name": cost_name,
         "seller_id": user_id,
         "seller_name": user_name
     })
     save_data(INFO_FILE, info)
+    return new_id
 
 
-def handle_show_items():
+def handle_show_items(category_id):
     return [
-        {"id": item["id"], "description": item["description"], "cost": item["cost"]}
-        for item in info
+        {"id": item["id"], "description": item["description"], "cost": item["cost"], "cost_name": item.get("cost_name", "штукарики")}
+        for item in info[str(category_id)]
     ]
 
 
-def handle_buy_item(user_id, item_id):
-    item = next((x for x in info if x["id"] == item_id), None)
+def handle_buy_item(user_id, category_id, item_id):
+    item = next((x for x in info[str(category_id)] if x["id"] == item_id), None)
     if not item:
         return "Item not found."
-
     user = get_user(user_id)
     if user["balance"] < item["cost"]:
         return "Insufficient balance."
-
     update_balance(user_id, -item["cost"])
+    log_operation(f'{user["name"]} ({user_id}) купил информацию: {item["description"]} ({item["details"]}), за {item["cost"]} {item.get("cost_name", "штукарики")}.')
     return item["details"]
 
 
-def handle_sell_item(user_id, description, details, cost):
+def handle_sell_item(user_id, description, details, cost, category_id, cost_name="штукарики"):
+    if category_id == 0:
+        return "В категорию 0 нельзя продавать информацию! Особый поставщик только продает."
     user = get_user(user_id)
-    add_info(user_id, user["name"], description, details, cost)
+    пояснения = []
+    orig_cost = cost
+    if cost > 3:
+        cost = 3
+        пояснения.append("(нельзя продать дороже 3 кредитов, цена скорректирована)")
+    if cost < 1:
+        cost = 1
+        пояснения.append("(нельзя продать дешевле 1 кредита, цена скорректирована)")
+
+    if len(description) < 200:
+        return "ОШИБКА: Описание информации слишком короткое (меньше 200 символов). Пожалуйста, опишите информацию подробнее."
+    new_id = add_info(category_id, user_id, user["name"], description, details, cost, cost_name)
     update_balance(user_id, cost)
-    return f"Информация продана за {cost} кредитов. Ваш новый баланс: {users[user_id]['balance']} кредитов."
+    log_operation(f'{user["name"]} ({user_id}) продал информацию: {description} ({details}), за {cost} {cost_name} (категория {category_id}, id {new_id}).')
+    пояснение = " ".join(пояснения)
+    return f"Информация продана за {cost} {cost_name}. {пояснение} Ваш новый баланс: {users[user_id]['balance']} {cost_name}."
 
 
-def handle_get_purchased_items():
-    return [item["description"] for item in info]
+def handle_get_purchased_items(user_id):
+    # Вернуть список купленных описаний и деталей по всем категориям
+    purchased = []
+    for cat_id, items in info.items():
+        for item in items:
+            if item.get("buyer_id") == user_id:
+                purchased.append({
+                    "description": item["description"],
+                    "details": item["details"]
+                })
+    return purchased
 
+async def show_category_to_user(category_id, user_id, context):
+    category_id = int(category_id)
+    if str(category_id) not in info:
+        return f"Категория {category_id} не найдена."
+    category_name = CATEGORY_NAMES.get(str(category_id), f"Категория {category_id}")
+    items = info[str(category_id)]
+    if not items:
+        return f"В категории '{category_name}' пока нет информации."
+    message_lines = [f"📚 <b>Информация в категории '{category_name}':</b>\n"]
+    for i, item in enumerate(items, 1):
+        cost_name = item.get("cost_name", "штукарики")
+        message_lines.append(
+            f"{i}. <b>{item['description']}</b>\n"
+            f"   💰 Стоимость: {item['cost']} {cost_name}\n"
+        )
+    message_text = "\n".join(message_lines)
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=message_text,
+            parse_mode='HTML'
+        )
+        return f"Список информации из категории '{category_name}' отправлен в чат."
+    except Exception as e:
+        logging.error(f"Ошибка отправки сообщения: {e}")
+        return f"Ошибка отправки списка: {str(e)}"
 
 # ------------------------------------------------------------------------------
 # Функции взаимодействия с OpenAI Threads
@@ -133,7 +233,7 @@ def add_message_to_thread(client, thread_id, role, content, user_id=None):
     user_info = ""
     if user_id:
         user = get_user(user_id)
-        user_info = f" ({user['name']}, баланс: {user['balance']} кредитов)"
+        user_info = f" ({user['name']}, баланс: {user['balance']})"
     message_content = f"{content}{user_info}"
     logging.info(f"Adding message to thread {thread_id}: {role} - {message_content}")
     client.beta.threads.messages.create(
@@ -154,7 +254,7 @@ def submit_tool_outputs(client, thread_id, run_id, tool_outputs):
     return response
 
 
-async def run_assistant(client, thread_id, assistant_id, user_id):
+async def run_assistant(client, thread_id, assistant_id, user_id, context):
     """Запускает ассистента на указанном потоке и обрабатывает его ответы."""
     logging.info(f"Running assistant {assistant_id} on thread {thread_id}")
     run = client.beta.threads.runs.create(
@@ -162,33 +262,55 @@ async def run_assistant(client, thread_id, assistant_id, user_id):
         assistant_id=assistant_id
     )
 
+    iteration = 0
     while True:
-        # Вместо time.sleep используем asyncio.sleep для асинхронности
+        iteration += 1
+        # Вместо 
+        #re.sleep используем asyncio.sleep для асинхронности
         await asyncio.sleep(3)
         run = client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
-        logging.info(f"Run status: {run.status}")
+        general_logger.info(f"Iteration {iteration}: Run status: {run.status}")
 
         if run.status in ["queued", "in_progress"]:
+            general_logger.info(f"Run still in progress (iteration {iteration}), waiting...")
             continue
         elif run.status == "requires_action":
-            logging.warning(f"Run requires action: {run.required_action}")
+            general_logger.warning(f"Run requires action: {run.required_action}")
             tool_calls = run.required_action.submit_tool_outputs.tool_calls
+            general_logger.info(f"Processing {len(tool_calls)} tool calls")
             tool_outputs = []
             for tool_call in tool_calls:
                 function_name = tool_call.function.name
                 arguments = json.loads(tool_call.function.arguments)
+                general_logger.info(f"Executing tool: {function_name} with args: {arguments}")
+                
                 if function_name == "sell_item":
-                    result = handle_sell_item(user_id, arguments["description"], arguments["details"],
-                                              arguments["cost"])
+                    result = handle_sell_item(
+                        user_id,
+                        arguments["description"],
+                        arguments["details"],
+                        arguments["cost"],
+                        int(arguments["category_id"]),
+                        arguments.get("cost_name", "штукарики")
+                    )
                 elif function_name == "buy_item":
-                    result = handle_buy_item(user_id, arguments["item_id"])
-                elif function_name == "show_items":
-                    result = handle_show_items()
+                    result = handle_buy_item(
+                        user_id,
+                        int(arguments["category_id"]),
+                        arguments["item_id"]
+                    )
+                elif function_name == "get_items_for_category":
+                    result = handle_show_items(int(arguments["category_id"]))
                 elif function_name == "get_purchased_items":
-                    result = handle_get_purchased_items()
+                    result = handle_get_purchased_items(user_id)
+                elif function_name == "get_categories_with_counts":
+                    result = get_categories_with_counts()
+                elif function_name == "show_category_to_user":
+                    result = await show_category_to_user(int(arguments["category_id"]), user_id, context)
                 else:
                     result = "Unknown function call."
 
+                general_logger.info(f"Tool {function_name} result: {result}")
                 tool_outputs.append({
                     "tool_call_id": tool_call.id,
                     "output": json.dumps(result, ensure_ascii=False)
@@ -196,12 +318,17 @@ async def run_assistant(client, thread_id, assistant_id, user_id):
             submit_tool_outputs(client, thread_id, run.id, tool_outputs)
 
         elif run.status in ["cancelling", "cancelled", "failed", "incomplete", "expired"]:
-            logging.error(f"Run ended with status: {run.status}")
+            general_logger.error(f"Run ended with status: {run.status}")
+            if hasattr(run, 'last_error') and run.last_error:
+                general_logger.error(f"Last error: {run.last_error}")
             return []  # Возвращаем пустой список сообщений
         elif run.status == "completed":
+            general_logger.info(f"Run completed successfully after {iteration} iterations")
             # Получаем все сообщения потока
             messages = client.beta.threads.messages.list(thread_id=thread_id).data
-            logging.info(f"Received messages: {messages}")
+            general_logger.info(f"Retrieved {len(messages)} messages from thread")
+            for i, msg in enumerate(messages):
+                general_logger.info(f"Message {i+1}: role={msg.role}, content_type={type(msg.content)}")
             return messages
     return []
 
@@ -212,45 +339,79 @@ async def run_assistant(client, thread_id, assistant_id, user_id):
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка команды /start."""
     chat_id = str(update.effective_chat.id)
-    telegram_user = update.effective_user
-
-    # Если пользователь не существует в хранилище - создаём
     user = get_user(chat_id)
+
     if not user:
-        # Берём имя из Telegram (если пустое, подставьте что-то по умолчанию)
-        name = telegram_user.first_name or "NoName"
-        user = create_user(chat_id, name)
         await update.message.reply_text(
-            f"Привет, {user['name']}! Я создал для вас нового пользователя."
+            "Привет! Я бот для обмена информацией. Пожалуйста, введите ваше имя:"
         )
+        return WAITING_FOR_NAME
     else:
+        user_logger = get_user_logger(chat_id, user["name"])
+        user_logger.info(f"Пользователь {user['name']} запустил бота")
         await update.message.reply_text(
-            f"С возвращением, {user['name']}!"
+            f"С возвращением, {user['name']}!",
+            parse_mode='HTML'
         )
 
-    # Проверяем, есть ли у пользователя поток (thread_id)
-    client = context.application.bot_data["openai_client"]  # См. ниже, как мы туда положим client
-    if not user.get("thread_id"):
-        # Создаём новый поток
-        thread = client.beta.threads.create()
-        user["thread_id"] = thread.id
-        save_data(USERS_FILE, users)
-        await update.message.reply_text("Создал новый поток (thread) для вашего пользователя.")
-    else:
-        # Пробуем получить существующий поток
-        try:
-            thread = client.beta.threads.retrieve(thread_id=user["thread_id"])
-            await update.message.reply_text("Продолжаем общение в существующем потоке.")
-        except Exception as e:
-            logging.error(f"Не удалось получить существующий поток: {e}")
-            # Создаём новый поток, если старый недоступен
+        # Проверяем, есть ли у пользователя поток (thread_id)
+        client = context.application.bot_data["openai_client"]
+        if not user.get("thread_id"):
+            # Создаём новый поток
             thread = client.beta.threads.create()
             user["thread_id"] = thread.id
             save_data(USERS_FILE, users)
-            await update.message.reply_text("Создал новый поток, так как старый недоступен.")
+            user_logger.info("Создан новый поток (thread) для пользователя")
+            await update.message.reply_text("Создал новый поток (thread) для вашего пользователя.", parse_mode='HTML')
+        else:
+            # Пробуем получить существующий поток
+            try:
+                thread = client.beta.threads.retrieve(thread_id=user["thread_id"])
+                user_logger.info("Продолжение общения в существующем потоке")
+                await update.message.reply_text("Продолжаем общение в существующем потоке.", parse_mode='HTML')
+            except Exception as e:
+                general_logger.error(f"Не удалось получить существующий поток: {e}")
+                # Создаём новый поток, если старый недоступен
+                thread = client.beta.threads.create()
+                user["thread_id"] = thread.id
+                save_data(USERS_FILE, users)
+                user_logger.info("Создан новый поток из-за недоступности старого")
+                await update.message.reply_text("Создал новый поток, так как старый недоступен.", parse_mode='HTML')
 
-    # Выводим баланс
-    await update.message.reply_text(f"Ваш баланс: {user['balance']} кредитов.")
+        # Выводим баланс
+        await update.message.reply_text(f"Ваш баланс: {user['balance']} кредитов. Привет, я Меняла, у меня есть всякая информация, её можно купить. А можно продать свою. Просто начни разговор.", parse_mode='HTML')
+        return ConversationHandler.END
+
+
+async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ввода имени пользователя."""
+    chat_id = str(update.effective_chat.id)
+    name = update.message.text.strip()
+    
+    if len(name) < 2:
+        await update.message.reply_text("Имя должно содержать минимум 2 символа. Попробуйте еще раз:", parse_mode='HTML')
+        return WAITING_FOR_NAME
+    
+    user = create_user(chat_id, name)
+    user_logger = get_user_logger(chat_id, name)
+    user_logger.info(f"Создан новый пользователь с именем {name}")
+    
+    await update.message.reply_text(
+        f"Отлично, {name}! Я создал для вас нового пользователя.",
+        parse_mode='HTML'
+    )
+    
+    # Создаём новый поток
+    client = context.application.bot_data["openai_client"]
+    thread = client.beta.threads.create()
+    user["thread_id"] = thread.id
+    save_data(USERS_FILE, users)
+    user_logger.info("Создан новый поток (thread) для пользователя")
+    
+    await update.message.reply_text("Создал новый поток (thread) для вашего пользователя.", parse_mode='HTML')
+    await update.message.reply_text(f"Ваш баланс: {user['balance']} кредитов.", parse_mode='HTML')
+    
+    return ConversationHandler.END
 
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -259,9 +420,12 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = get_user(chat_id)
 
     if not user:
-        # Если почему-то пользователь ещё не создан, то перенаправим на /start
-        await update.message.reply_text("Для начала введите /start")
+        # Если пользователь не существует, перенаправляем на /start
+        await update.message.reply_text("Для начала введите /start", parse_mode='HTML')
         return
+
+    user_logger = get_user_logger(chat_id, user["name"])
+    user_logger.info(f"Получено сообщение: {update.message.text}")
 
     client = context.application.bot_data["openai_client"]
 
@@ -275,35 +439,76 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     # Запускаем ассистента
+    user_logger.info("Запускаю ассистента...")
     messages = await run_assistant(
         client=client,
         thread_id=user["thread_id"],
         assistant_id=ASSISTANT_ID,
-        user_id=chat_id
+        user_id=chat_id,
+        context=context
     )
+
+    # Подробное логирование результатов
+    user_logger.info(f"Получено {len(messages)} сообщений от ассистента")
+    
+    if not messages:
+        user_logger.warning("Ассистент вернул пустой список сообщений")
+        await update.message.reply_text("❌ ОШИБКА: Ассистент не смог обработать ваш запрос. Попробуйте еще раз через несколько секунд.", parse_mode='HTML')
+        return
 
     # Ищем последнее сообщение ассистента и отправляем ответ
     assistant_text = None
-    for msg in messages:
+    assistant_message_found = False
+    
+    for i, msg in enumerate(messages):
+        user_logger.info(f"Сообщение {i+1}: role={msg.role}, content_type={type(msg.content)}")
+        
         if msg.role == "assistant":
-            # В рамках Threads API контент ассистента может быть в msg.content[0].text.value
-            # или иной структуре (зависит от версии), адаптируйте под свой случай
-            # Предположим, что это msg.content[0].text.value
+            assistant_message_found = True
+            user_logger.info(f"Найдено сообщение ассистента #{i+1}")
+            
             if msg.content and isinstance(msg.content, list):
-                assistant_text = msg.content[0].text.value
+                if len(msg.content) > 0:
+                    assistant_text = msg.content[0].text.value
+                    user_logger.info(f"Извлечен текст из content[0]: {assistant_text}...")
+                else:
+                    user_logger.warning("content является пустым списком")
             else:
                 assistant_text = str(msg.content)
+                user_logger.info(f"Извлечен текст напрямую: {assistant_text}...")
             break
 
+    if not assistant_message_found:
+        user_logger.warning("Не найдено ни одного сообщения от ассистента")
+        user_logger.info("Все сообщения в потоке:")
+        for i, msg in enumerate(messages):
+            user_logger.info(f"  {i+1}. role={msg.role}, content={str(msg.content)[:200]}...")
+        await update.message.reply_text("❌ ОШИБКА: Не найдено сообщение от ассистента. Возможно, произошла техническая проблема. Попробуйте еще раз.", parse_mode='HTML')
+        return
+
     if assistant_text:
-        await update.message.reply_text(assistant_text)
+        user_logger.info(f"Отправляю ответ пользователю: {assistant_text}...")
+        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', assistant_text)
+        await update.message.reply_text(text, parse_mode='HTML')
     else:
-        await update.message.reply_text("Не получил ответ от ассистента.")
+        user_logger.warning("Не удалось извлечь текст из сообщения ассистента")
+        user_logger.info("Структура сообщения ассистента:")
+        for msg in messages:
+            if msg.role == "assistant":
+                user_logger.info(f"  content: {msg.content}")
+                user_logger.info(f"  content type: {type(msg.content)}")
+                if hasattr(msg.content, '__dict__'):
+                    user_logger.info(f"  content attrs: {dir(msg.content)}")
+                break
+            else:
+                user_logger.info(f"Content msg: {msg.content}")
+
+        await update.message.reply_text("❌ ОШИБКА: Не удалось обработать ответ ассистента. Попробуйте еще раз или переформулируйте вопрос.", parse_mode='HTML')
 
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка неизвестных команд."""
-    await update.message.reply_text("Извините, я не знаю такой команды.")
+    await update.message.reply_text("Извините, я не знаю такой команды.", parse_mode='HTML')
 
 
 # ------------------------------------------------------------------------------
@@ -328,11 +533,19 @@ def main():
     # В bot_data сложим наш openai_client, чтобы иметь доступ в хендлерах
     application.bot_data["openai_client"] = openai_client
 
+    # Создаем ConversationHandler для обработки команды /start и ввода имени
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", cmd_start)],
+        states={
+            WAITING_FOR_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name)],
+        },
+        fallbacks=[CommandHandler("start", cmd_start)]
+    )
+
     # Регистрируем хендлеры
-    application.add_handler(CommandHandler("start", cmd_start))
+    application.add_handler(conv_handler)
     # Текстовые сообщения (не команды)
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text_message))
-
     # Хендлер для неизвестных команд
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
 
@@ -342,3 +555,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
