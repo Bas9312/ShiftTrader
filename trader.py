@@ -146,6 +146,8 @@ def add_info(category_id, user_id, user_name, description, details, cost, cost_n
 
 
 def handle_show_items(category_id):
+    if str(category_id) not in info:
+        return f"Категория с id {category_id} не найдена."
     return [
         {"id": item["id"], "description": item["description"], "cost": item["cost"], "cost_name": item.get("cost_name", "штукарики")}
         for item in info[str(category_id)]
@@ -153,6 +155,8 @@ def handle_show_items(category_id):
 
 
 def handle_buy_item(user_id, category_id, item_id):
+    if str(category_id) not in info:
+        return f"Категория с id {category_id} не найдена."
     item = next((x for x in info[str(category_id)] if x["id"] == item_id), None)
     if not item:
         return "Item not found."
@@ -165,6 +169,8 @@ def handle_buy_item(user_id, category_id, item_id):
 
 
 def handle_sell_item(user_id, description, details, cost, category_id, cost_name="штукарики"):
+    if str(category_id) not in info:
+        return f"Категория с id {category_id} не найдена."
     if category_id == 0:
         return "В категорию 0 нельзя продавать информацию! Особый поставщик только продает."
     user = get_user(user_id)
@@ -176,7 +182,6 @@ def handle_sell_item(user_id, description, details, cost, category_id, cost_name
     if cost < 1:
         cost = 1
         пояснения.append("(нельзя продать дешевле 1 кредита, цена скорректирована)")
-
     if len(description) < 200:
         return "ОШИБКА: Описание информации слишком короткое (меньше 200 символов). Пожалуйста, опишите информацию подробнее."
     new_id = add_info(category_id, user_id, user["name"], description, details, cost, cost_name)
@@ -199,7 +204,6 @@ def handle_get_purchased_items(user_id):
     return purchased
 
 async def show_category_to_user(category_id, user_id, context):
-    category_id = int(category_id)
     if str(category_id) not in info:
         return f"Категория {category_id} не найдена."
     category_name = CATEGORY_NAMES.get(str(category_id), f"Категория {category_id}")
