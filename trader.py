@@ -184,8 +184,8 @@ def handle_sell_item(user_id, description, details, cost, category_id, cost_name
     if cost < 1:
         cost = 1
         пояснения.append("(нельзя продать дешевле 1 кредита, цена скорректирована)")
-    if len(description) < 100:
-        return "ОШИБКА: Описание информации слишком короткое (меньше 100 символов). Пожалуйста, опишите информацию подробнее."
+    if len(details) < 299:
+        return "ОШИБКА: Описание информации слишком короткое (меньше 200 символов). Пожалуйста, опишите информацию подробнее."
     new_id = add_info(category_id, user_id, user["name"], description, details, cost, cost_name)
     update_balance(user_id, cost)
     log_operation(f'{user["name"]} ({user_id}) продал информацию: {description} ({details}), за {cost} {cost_name} (категория {category_id}, id {new_id}).')
