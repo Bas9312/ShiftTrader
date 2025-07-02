@@ -184,7 +184,7 @@ def handle_sell_item(user_id, description, details, cost, category_id, cost_name
     if cost < 1:
         cost = 1
         пояснения.append("(нельзя продать дешевле 1 кредита, цена скорректирована)")
-    if len(details) < 299:
+    if len(details) < 200:
         return "ОШИБКА: Описание информации слишком короткое (меньше 200 символов). Пожалуйста, опишите информацию подробнее."
     new_id = add_info(category_id, user_id, user["name"], description, details, cost, cost_name)
     update_balance(user_id, cost)
@@ -278,16 +278,21 @@ async def run_assistant(client, thread_id, assistant_id, user_id, context):
         thread_id=thread_id,
         assistant_id=assistant_id,
         truncation_strategy={
-        "type": "last_messages",
-        "last_messages": 8
-    },
+            "type": "last_messages",
+            "last_messages": 8
+        },
     )
 
     iteration = 0
     while True:
         iteration += 1
-        # Вместо 
-        #re.sleep используем asyncio.sleep для асинхронности
+        if iteration > 30:
+            general_logger.error(f"Run for thread {thread_id} exceeded 30 iterations, cancelling.")
+            try:
+                client.beta.threads.runs.cancel(thread_id=thread_id, run_id=run.id)
+            except Exception as e:
+                general_logger.error(f"Error cancelling run: {e}")
+            return [{"error": "❌ ОШИБКА: Не удалось получить ответ от ассистента. Попробуйте позже."}]
         await asyncio.sleep(3)
         run = client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
         general_logger.info(f"Iteration {iteration}: Run status: {run.status}")
@@ -352,7 +357,16 @@ async def run_assistant(client, thread_id, assistant_id, user_id, context):
             general_logger.info(f"Retrieved {len(messages)} messages from thread")
             for i, msg in enumerate(messages):
                 general_logger.info(f"Message {i+1}: role={msg.role}, content_type={type(msg.content)}")
-            return messages
+            # Фильтруем все подряд идущие с конца сообщения ассистента до первого user
+            assistant_msgs = []
+            for msg in messages:
+                if msg.role == "assistant":
+                    assistant_msgs.append(msg)
+                elif msg.role == "user":
+                    break
+            # Отправим их в обратном порядке (от старого к новому)
+            assistant_msgs = list(reversed(assistant_msgs))
+            return assistant_msgs
     return []
 
 
@@ -473,60 +487,24 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Подробное логирование результатов
     user_logger.info(f"Получено {len(messages)} сообщений от ассистента")
-    
     if not messages:
         user_logger.warning("Ассистент вернул пустой список сообщений")
         await update.message.reply_text("❌ ОШИБКА: Ассистент не смог обработать ваш запрос. Попробуйте еще раз через несколько секунд.", parse_mode='HTML')
         return
 
-    # Ищем последнее сообщение ассистента и отправляем ответ
-    assistant_text = None
-    assistant_message_found = False
-    
-    for i, msg in enumerate(messages):
-        user_logger.info(f"Сообщение {i+1}: role={msg.role}, content_type={type(msg.content)}")
-        
-        if msg.role == "assistant":
-            assistant_message_found = True
-            user_logger.info(f"Найдено сообщение ассистента #{i+1}")
-            
-            if msg.content and isinstance(msg.content, list):
-                if len(msg.content) > 0:
-                    assistant_text = msg.content[0].text.value
-                    user_logger.info(f"Извлечен текст из content[0]: {assistant_text}...")
-                else:
-                    user_logger.warning("content является пустым списком")
-            else:
-                assistant_text = str(msg.content)
-                user_logger.info(f"Извлечен текст напрямую: {assistant_text}...")
-            break
-
-    if not assistant_message_found:
-        user_logger.warning("Не найдено ни одного сообщения от ассистента")
-        user_logger.info("Все сообщения в потоке:")
-        for i, msg in enumerate(messages):
-            user_logger.info(f"  {i+1}. role={msg.role}, content={str(msg.content)[:200]}...")
-        await update.message.reply_text("❌ ОШИБКА: Не найдено сообщение от ассистента. Возможно, произошла техническая проблема. Попробуйте еще раз.", parse_mode='HTML')
+    # Если вернулся объект с ошибкой
+    if isinstance(messages, list) and len(messages) == 1 and isinstance(messages[0], dict) and "error" in messages[0]:
+        user_logger.error(messages[0]["error"])
+        await update.message.reply_text(messages[0]["error"], parse_mode='HTML')
         return
 
-    if assistant_text:
-        user_logger.info(f"Отправляю ответ пользователю: {assistant_text}...")
-        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', assistant_text)
+    # Отправляем все подряд идущие сообщения ассистента (от старого к новому)
+    for msg in messages:
+        user_logger.info(f"Отправляю ответ пользователю: {msg.content}...")
+        text = str(msg.content)
+        # Преобразуем **жирный** в <b>жирный</b> для совместимости
+        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
         await update.message.reply_text(text, parse_mode='HTML')
-    else:
-        user_logger.warning("Не удалось извлечь текст из сообщения ассистента")
-        user_logger.info("Структура сообщения ассистента:")
-        for msg in messages:
-            if msg.role == "assistant":
-                user_logger.info(f"  content: {msg.content}")
-                user_logger.info(f"  content type: {type(msg.content)}")
-                if hasattr(msg.content, '__dict__'):
-                    user_logger.info(f"  content attrs: {dir(msg.content)}")
-                break
-            else:
-                user_logger.info(f"Content msg: {msg.content}")
-
-        await update.message.reply_text("❌ ОШИБКА: Не удалось обработать ответ ассистента. Попробуйте еще раз или переформулируйте вопрос.", parse_mode='HTML')
 
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
