@@ -198,7 +198,7 @@ def handle_get_purchased_items(user_id):
     purchased = []
     for cat_id, items in info.items():
         for item in items:
-            if item.get("buyer_id") == user_id:
+            if item.get("seller_id") == user_id:
                 purchased.append({
                     "description": item["description"],
                     "details": item["details"]
