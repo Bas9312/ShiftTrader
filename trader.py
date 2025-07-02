@@ -26,6 +26,7 @@ USERS_FILE = "users.json"
 INFO_FILE = "info.json"
 LOGS_DIR = "logs"
 INFO_ABOUT_WORLD_FILE = "info_about_world.json"
+PURCHASE_HISTORY_FILE = "purchase_history.json"
 
 # ID вашего ассистента в OpenAI
 ASSISTANT_ID = "asst_VxE0V10Gi7Q3EXRIFvUSbqTp"
@@ -156,6 +157,39 @@ def handle_show_items(category_id):
     ]
 
 
+def save_purchase_history(user_id, category_id, item):
+    try:
+        if os.path.exists(PURCHASE_HISTORY_FILE):
+            with open(PURCHASE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                history = json.load(f)
+        else:
+            history = {}
+        user_id_str = str(user_id)
+        if user_id_str not in history:
+            history[user_id_str] = []
+        history[user_id_str].append({
+            "category_id": category_id,
+            "id": item["id"],
+            "description": item["description"],
+            "details": item["details"],
+            "cost": item["cost"],
+            "cost_name": item.get("cost_name", "штукарики")
+        })
+        with open(PURCHASE_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        general_logger.error(f"Ошибка при сохранении purchase_history: {e}")
+
+def get_user_purchase_history(user_id):
+    try:
+        if not os.path.exists(PURCHASE_HISTORY_FILE):
+            return []
+        with open(PURCHASE_HISTORY_FILE, "r", encoding="utf-8") as f:
+            history = json.load(f)
+        return history.get(str(user_id), [])
+    except Exception as e:
+        return f"Ошибка при получении purchase_history: {e}"
+
 def handle_buy_item(user_id, category_id, item_id):
     if str(category_id) not in info:
         return f"Категория с id {category_id} не найдена."
@@ -167,6 +201,7 @@ def handle_buy_item(user_id, category_id, item_id):
         return "Insufficient balance."
     update_balance(user_id, -item["cost"])
     log_operation(f'{user["name"]} ({user_id}) купил информацию: {item["description"]} ({item["details"]}), за {item["cost"]} {item.get("cost_name", "штукарики")}.')
+    save_purchase_history(user_id, category_id, item)
     return item["details"]
 
 
@@ -335,6 +370,8 @@ async def run_assistant(client, thread_id, assistant_id, user_id, context):
                     result = await show_category_to_user(int(arguments["category_id"]), user_id, context)
                 elif function_name == "get_random_info_about_world":
                     result = get_random_info_about_world()
+                elif function_name == "get_user_purchase_history":
+                    result = get_user_purchase_history(user_id)
                 else:
                     result = "Unknown function call."
 
