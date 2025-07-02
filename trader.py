@@ -259,7 +259,11 @@ async def run_assistant(client, thread_id, assistant_id, user_id, context):
     logging.info(f"Running assistant {assistant_id} on thread {thread_id}")
     run = client.beta.threads.runs.create(
         thread_id=thread_id,
-        assistant_id=assistant_id
+        assistant_id=assistant_id,
+        truncation_strategy={
+        "type": "last_messages",
+        "last_messages": 8
+    }
     )
 
     iteration = 0
