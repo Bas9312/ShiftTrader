@@ -15,6 +15,7 @@ from telegram.ext import (
     filters,
     ConversationHandler
 )
+import random
 
 # Импортируйте ваш OpenAI SDK, как у вас настроено
 import openai
@@ -24,6 +25,7 @@ from openai import OpenAI
 USERS_FILE = "users.json"
 INFO_FILE = "info.json"
 LOGS_DIR = "logs"
+INFO_ABOUT_WORLD_FILE = "info_about_world.json"
 
 # ID вашего ассистента в OpenAI
 ASSISTANT_ID = "asst_VxE0V10Gi7Q3EXRIFvUSbqTp"
@@ -229,6 +231,17 @@ async def show_category_to_user(category_id, user_id, context):
         logging.error(f"Ошибка отправки сообщения: {e}")
         return f"Ошибка отправки списка: {str(e)}"
 
+
+
+def get_random_info_about_world():
+    try:
+        with open(INFO_ABOUT_WORLD_FILE, "r", encoding="utf-8") as f:
+            facts = json.load(f)
+        if not isinstance(facts, list) or not facts:
+            return "Нет фактов о мире."
+        return random.choice(facts)
+    except Exception as e:
+        return f"Ошибка при получении факта о мире: {e}"
 # ------------------------------------------------------------------------------
 # Функции взаимодействия с OpenAI Threads
 # ------------------------------------------------------------------------------
@@ -315,6 +328,8 @@ async def run_assistant(client, thread_id, assistant_id, user_id, context):
                     result = get_categories_with_counts()
                 elif function_name == "show_category_to_user":
                     result = await show_category_to_user(int(arguments["category_id"]), user_id, context)
+                elif function_name == "get_random_info_about_world":
+                    result = get_random_info_about_world()
                 else:
                     result = "Unknown function call."
 
