@@ -501,9 +501,18 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Отправляем все подряд идущие сообщения ассистента (от старого к новому)
     for msg in messages:
         user_logger.info(f"Отправляю ответ пользователю: {msg.content}...")
-        text = str(msg.content)
+        if msg.content and isinstance(msg.content, list):
+                if len(msg.content) > 0:
+                    assistant_text = msg.content[0].text.value
+                    user_logger.info(f"Извлечен текст из content[0]: {assistant_text}...")
+                else:
+                    user_logger.warning("content является пустым списком")
+        else:
+            assistant_text = str(msg.content)
+            user_logger.info(f"Извлечен текст напрямую: {assistant_text}...")
+        
         # Преобразуем **жирный** в <b>жирный</b> для совместимости
-        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+        text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', assistant_text)
         await update.message.reply_text(text, parse_mode='HTML')
 
 
