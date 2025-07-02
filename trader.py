@@ -226,7 +226,7 @@ async def show_category_to_user(category_id, user_id, context):
             text=message_text,
             parse_mode='HTML'
         )
-        return f"Список информации из категории '{category_name}' отправлен в чат."
+        return f"Список информации из категории '{category_name}' отправлен пользователю напрямую. Вы можете продолжать разговор, не придумывай список сам."
     except Exception as e:
         logging.error(f"Ошибка отправки сообщения: {e}")
         return f"Ошибка отправки списка: {str(e)}"
