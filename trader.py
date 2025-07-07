@@ -195,14 +195,14 @@ def handle_buy_item(user_id, category_id, item_id):
         return f"Категория с id {category_id} не найдена."
     item = next((x for x in info[str(category_id)] if x["id"] == item_id), None)
     if not item:
-        return "Item not found."
+        return "В категории не найдена информация с заданным id"
     user = get_user(user_id)
     if user["balance"] < item["cost"]:
-        return "Insufficient balance."
+        return "Недостаточно кредитов на балансе"
     update_balance(user_id, -item["cost"])
     log_operation(f'{user["name"]} ({user_id}) купил информацию: {item["description"]} ({item["details"]}), за {item["cost"]} {item.get("cost_name", "штукарики")}.')
     save_purchase_history(user_id, category_id, item)
-    return item["details"]
+    return f"Информация успешно куплена за {item['cost']}, вот её описание {item['details']}"
 
 
 def handle_sell_item(user_id, description, details, cost, category_id, cost_name="штукарики"):
@@ -215,10 +215,10 @@ def handle_sell_item(user_id, description, details, cost, category_id, cost_name
     orig_cost = cost
     if cost > 3:
         cost = 3
-        пояснения.append("(нельзя продать дороже 3 кредитов, цена скорректирована)")
+        пояснения.append("(нельзя продать дороже 3 кредитов, цена скорректирована до 3)")
     if cost < 1:
         cost = 1
-        пояснения.append("(нельзя продать дешевле 1 кредита, цена скорректирована)")
+        пояснения.append("(нельзя продать дешевле 1 кредита, цена скорректирована до 1)")
     if len(details) < 200:
         return "ОШИБКА: Описание информации слишком короткое (меньше 200 символов). Пожалуйста, опишите информацию подробнее."
     new_id = add_info(category_id, user_id, user["name"], description, details, cost, cost_name)
