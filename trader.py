@@ -40,7 +40,7 @@ if not os.path.exists(LOGS_DIR):
 
 # Настраиваем общее логирование
 general_logger = logging.getLogger('general')
-general_logger.setLevel(logging.INFO)
+general_logger.setLevel(logging.DEBUG)
 general_handler = logging.FileHandler(os.path.join(LOGS_DIR, 'general.log'), encoding='utf-8')
 general_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 general_logger.addHandler(general_handler)
