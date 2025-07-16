@@ -240,31 +240,23 @@ def handle_get_purchased_items(user_id):
                 })
     return purchased
 
-async def show_info_from_category_to_user(category_id, user_id, context):
+async def get_info_from_category(category_id, user_id, context):
     if str(category_id) not in info:
         return f"Категория {category_id} не найдена."
     category_name = CATEGORY_NAMES.get(str(category_id), f"Категория {category_id}")
     items = info[str(category_id)]
     if not items:
         return f"В категории '{category_name}' пока нет информации."
-    message_lines = [f"📚 <b>Информация в категории '{category_name}':</b>\n"]
-    for i, item in enumerate(items, 1):
-        cost_name = item.get("cost_name", "штукарики")
-        message_lines.append(
-            f"<b>{item['description']}</b>\n"
-            f"   💰 Стоимость: {item['cost']} {cost_name}\n"
-        )
-    message_text = "\n".join(message_lines)
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=message_text,
-            parse_mode='HTML'
-        )
-        return f"Список информации из категории '{category_name}' отправлен пользователю напрямую. Вы можете продолжать разговор, не придумывай список сам."
-    except Exception as e:
-        logging.error(f"Ошибка отправки сообщения: {e}")
-        return f"Ошибка отправки списка: {str(e)}"
+    items_json = []
+    for idx, item in enumerate(items, 1):
+        items_json.append({
+            "id": idx,
+            "description": item.get("description", "<без описания>"),
+            "cost": item.get("cost", 0),
+            "cost_name": item.get("cost_name", "штукарики")
+        })
+
+    return items_json
 
 
 
@@ -368,8 +360,8 @@ async def run_assistant(client, thread_id, assistant_id, user_id, context):
                     result = handle_get_purchased_items(user_id)
                 elif function_name == "get_categories_with_counts":
                     result = get_categories_with_counts()
-                elif function_name == "show_info_from_category_to_user":
-                    result = await show_info_from_category_to_user(int(arguments["category_id"]), user_id, context)
+                elif function_name == "get_info_from_category":
+                    result = await get_info_from_category(int(arguments["category_id"]), user_id, context)
                 elif function_name == "get_random_info_about_world":
                     result = get_random_info_about_world()
                 elif function_name == "get_user_purchase_history":
