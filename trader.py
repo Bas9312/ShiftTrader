@@ -319,7 +319,6 @@ async def run_assistant(client, thread_id, assistant_id, user_id, context):
         max_prompt_tokens     = 4096,  # опционально
         max_completion_tokens = 256    # опционально
     )
-    general_logger.debug(f"Run costs {run.usage}")
 
     iteration = 0
     while True:
@@ -392,6 +391,7 @@ async def run_assistant(client, thread_id, assistant_id, user_id, context):
             return []  # Возвращаем пустой список сообщений
         elif run.status == "completed":
             general_logger.info(f"Run completed successfully after {iteration} iterations")
+            general_logger.debug(f"Run costs {run.usage}")
             # Получаем все сообщения потока
             messages = client.beta.threads.messages.list(thread_id=thread_id).data
             general_logger.info(f"Retrieved {len(messages)} messages from thread")
