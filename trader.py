@@ -72,7 +72,7 @@ def load_data(file_path):
         # Создаём файл и инициализируем пустой структурой
         if file_path == INFO_FILE:
             with open(file_path, "w", encoding="utf-8") as f:
-                json.dump({"0": [], "1": [], "2": [], "3": [], "4": [], "5": []}, f, ensure_ascii=False, indent=4)
+                json.dump({"1": [], "2": [], "3": [], "4": [], "5": [], "6": []}, f, ensure_ascii=False, indent=4)
         else:
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump({}, f, ensure_ascii=False, indent=4)
@@ -113,12 +113,12 @@ def update_balance(user_id: str, amount: int):
 
 # Новая структура info: категории -> массивы инфы
 CATEGORY_NAMES = {
-    "0": "О магических дисциплинах (от особого поставщика)",
-    "1": "О магических дисциплинах",
-    "2": "О конкретных волшебниках или их группах",
-    "3": "О магических существах",
-    "4": "О магических местах и артефактах",
-    "5": "Прочие знания"
+    "1": "О магических дисциплинах (от особого поставщика)",
+    "2": "О магических дисциплинах",
+    "3": "О конкретных волшебниках или их группах",
+    "4": "О магических существах",
+    "5": "О магических местах и артефактах",
+    "6": "Прочие знания"
 }
 
 def get_categories_with_counts():
@@ -208,8 +208,8 @@ def handle_buy_item(user_id, category_id, item_id):
 def handle_sell_item(user_id, description, details, cost, category_id, cost_name="штукарики"):
     if str(category_id) not in info:
         return f"Категория с id {category_id} не найдена."
-    if category_id == 0:
-        return "В категорию 0 нельзя продавать информацию! Особый поставщик только продает."
+    if category_id == 1:
+        return "В категорию 1 нельзя продавать информацию! Особый поставщик только продает."
     user = get_user(user_id)
     пояснения = []
     orig_cost = cost
@@ -240,7 +240,7 @@ def handle_get_purchased_items(user_id):
                 })
     return purchased
 
-async def show_category_to_user(category_id, user_id, context):
+async def show_info_from_category_to_user(category_id, user_id, context):
     if str(category_id) not in info:
         return f"Категория {category_id} не найдена."
     category_name = CATEGORY_NAMES.get(str(category_id), f"Категория {category_id}")
@@ -251,7 +251,7 @@ async def show_category_to_user(category_id, user_id, context):
     for i, item in enumerate(items, 1):
         cost_name = item.get("cost_name", "штукарики")
         message_lines.append(
-            f"{i}. <b>{item['description']}</b>\n"
+            f"<b>{item['description']}</b>\n"
             f"   💰 Стоимость: {item['cost']} {cost_name}\n"
         )
     message_text = "\n".join(message_lines)
@@ -310,13 +310,16 @@ async def run_assistant(client, thread_id, assistant_id, user_id, context):
     """Запускает ассистента на указанном потоке и обрабатывает его ответы."""
     logging.info(f"Running assistant {assistant_id} on thread {thread_id}")
     run = client.beta.threads.runs.create(
-        thread_id=thread_id,
-        assistant_id=assistant_id,
+        thread_id       = thread_id,
+        assistant_id    = assistant_id,
         truncation_strategy={
             "type": "last_messages",
-            "last_messages": 8
+            "last_messages": 4     # можно смело уменьшить до 4–6
         },
+        max_prompt_tokens     = 4096,  # опционально
+        max_completion_tokens = 256    # опционально
     )
+    general_logger.debug(f"Run costs {run.usage}")
 
     iteration = 0
     while True:
@@ -366,8 +369,8 @@ async def run_assistant(client, thread_id, assistant_id, user_id, context):
                     result = handle_get_purchased_items(user_id)
                 elif function_name == "get_categories_with_counts":
                     result = get_categories_with_counts()
-                elif function_name == "show_category_to_user":
-                    result = await show_category_to_user(int(arguments["category_id"]), user_id, context)
+                elif function_name == "show_info_from_category_to_user":
+                    result = await show_info_from_category_to_user(int(arguments["category_id"]), user_id, context)
                 elif function_name == "get_random_info_about_world":
                     result = get_random_info_about_world()
                 elif function_name == "get_user_purchase_history":
