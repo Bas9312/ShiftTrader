@@ -306,7 +306,7 @@ async def run_assistant(client, thread_id, assistant_id, user_id, context):
         assistant_id    = assistant_id,
         truncation_strategy={
             "type": "last_messages",
-            "last_messages": 8    # можно смело уменьшить до 4–6
+            "last_messages": 4    # можно смело уменьшить до 4–6
         },
         max_completion_tokens = 1024    # опционально
     )
